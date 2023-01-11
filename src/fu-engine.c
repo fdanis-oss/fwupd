@@ -127,6 +127,12 @@ struct _FuEngine {
 	GMainLoop *acquiesce_loop;
 	guint acquiesce_id;
 	guint acquiesce_delay;
+
+	/* Backend and device records for emulated device */
+	FuBackend *emulation_backend;
+	JsonObject *emulated_init;
+	JsonObject *emulated_write_firmware;
+	JsonObject *emulated_reload;
 };
 
 enum {
@@ -3579,6 +3585,15 @@ fu_engine_install_blob(FuEngine *self,
 			return FALSE;
 		fu_progress_step_done(progress_local);
 
+		if (self->emulated_write_firmware != NULL) {
+			if (!fu_backend_load(self->emulation_backend,
+					     self->emulated_write_firmware,
+					     NULL,
+					     FU_BACKEND_LOAD_FLAG_NONE,
+					     error))
+				return FALSE;
+		}
+
 		/* install */
 		if (!fu_engine_write_firmware(self,
 					      device_id,
@@ -3596,6 +3611,15 @@ fu_engine_install_blob(FuEngine *self,
 				      error))
 			return FALSE;
 		fu_progress_step_done(progress_local);
+
+		if (self->emulated_reload != NULL) {
+			if (!fu_backend_load(self->emulation_backend,
+					     self->emulated_reload,
+					     NULL,
+					     FU_BACKEND_LOAD_FLAG_NONE,
+					     error))
+				return FALSE;
+		}
 
 		/* get the new version number */
 		if (!fu_engine_reload(self, device_id, error))
@@ -8378,6 +8402,34 @@ fu_engine_backends_save(FuEngine *self, JsonBuilder *json_builder, GError **erro
 	return TRUE;
 }
 
+gboolean
+fu_engine_backends_load(FuEngine *self,
+			FuProgress *progress,
+			JsonObject *json_init,
+			JsonObject *json_write_firmware,
+			JsonObject *json_reload,
+			GError **error)
+{
+	self->emulated_init = json_init;
+	self->emulated_write_firmware = json_write_firmware;
+	self->emulated_reload = json_reload;
+
+	if (self->emulation_backend == NULL) {
+		self->emulation_backend = fu_usb_backend_new(self->ctx);
+		if (!fu_backend_setup(self->emulation_backend, progress, error)) {
+			g_prefix_error(error, "failed to setup emulation backend: ");
+			return FALSE;
+		}
+		g_ptr_array_add(self->backends, self->emulation_backend);
+	}
+
+	return fu_backend_load(self->emulation_backend,
+			       json_init,
+			       NULL,
+			       FU_BACKEND_LOAD_FLAG_NONE,
+			       error);
+}
+
 static void
 fu_engine_init(FuEngine *self)
 {
@@ -8562,6 +8614,13 @@ fu_engine_finalize(GObject *obj)
 	g_hash_table_unref(self->runtime_versions);
 	g_hash_table_unref(self->compile_versions);
 	g_object_unref(self->plugin_list);
+
+	if (self->emulated_init != NULL)
+		json_object_unref(self->emulated_init);
+	if (self->emulated_write_firmware != NULL)
+		json_object_unref(self->emulated_write_firmware);
+	if (self->emulated_reload != NULL)
+		json_object_unref(self->emulated_reload);
 
 	G_OBJECT_CLASS(fu_engine_parent_class)->finalize(obj);
 }

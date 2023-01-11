@@ -251,3 +251,10 @@ fu_engine_modify_bios_settings(FuEngine *self,
 			       GError **error);
 gboolean
 fu_engine_backends_save(FuEngine *self, JsonBuilder *json_builder, GError **error);
+gboolean
+fu_engine_backends_load(FuEngine *self,
+			FuProgress *progress,
+			JsonObject *json_init,
+			JsonObject *json_write_firmware,
+			JsonObject *json_reload,
+			GError **error);

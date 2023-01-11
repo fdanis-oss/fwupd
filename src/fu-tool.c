@@ -3455,6 +3455,77 @@ fu_util_backends_save(FuUtilPrivate *priv, const gchar *fn, GError **error)
 	return g_file_set_contents(fn, data, -1, error);
 }
 
+static gboolean
+fu_util_backends_load(FuUtilPrivate *priv, const gchar *fn, GError **error)
+{
+	gboolean ret;
+	g_autofree gchar *dir = g_path_get_dirname(fn);
+	g_autoptr(JsonParser) parser = json_parser_new();
+	JsonObject *json_object, *json_steps;
+	JsonObject *json_init = NULL;
+	JsonObject *json_write_firmware = NULL;
+	JsonObject *json_reload = NULL;
+	JsonArray *json_array;
+	JsonNode *json_node;
+
+	ret = json_parser_load_from_file(parser, fn, error);
+	g_assert_no_error(*error);
+	g_assert_true(ret);
+
+	json_object = json_node_get_object(json_parser_get_root(parser));
+
+	if (!json_object_has_member(json_object, "steps")) {
+		g_set_error_literal(error,
+				    G_IO_ERROR,
+				    G_IO_ERROR_INVALID_DATA,
+				    "Missing 'steps' entry in JSON file");
+		return FALSE;
+	}
+
+	json_array = json_object_get_array_member(json_object, "steps");
+	json_node = json_array_get_element(json_array, 0);
+	json_steps = json_node_get_object(json_node);
+	if (json_object_has_member(json_steps, "json-init")) {
+		g_autoptr(JsonParser) tmp_parser = json_parser_new();
+		g_autofree gchar *path = g_strdup_printf("%s/%s", dir, json_object_get_string_member(json_steps, "json-init"));
+
+		ret = json_parser_load_from_file(tmp_parser, path, error);
+		g_assert_no_error(*error);
+		g_assert_true(ret);
+		json_init = json_node_get_object(json_parser_get_root(tmp_parser));
+		json_object_ref(json_init);
+	}
+	if (json_object_has_member(json_steps, "json-write-firmware")) {
+		g_autoptr(JsonParser) tmp_parser = json_parser_new();
+		g_autofree gchar *path = g_strdup_printf("%s/%s", dir, json_object_get_string_member(json_steps, "json-write-firmware"));
+
+		tmp_parser = json_parser_new();
+		ret = json_parser_load_from_file(tmp_parser, path, error);
+		g_assert_no_error(*error);
+		g_assert_true(ret);
+		json_write_firmware = json_node_get_object(json_parser_get_root(tmp_parser));
+		json_object_ref(json_write_firmware);
+	}
+	if (json_object_has_member(json_steps, "json-reload")) {
+		g_autoptr(JsonParser) tmp_parser = json_parser_new();
+		g_autofree gchar *path = g_strdup_printf("%s/%s", dir, json_object_get_string_member(json_steps, "json-reload"));
+
+		tmp_parser = json_parser_new();
+		ret = json_parser_load_from_file(tmp_parser, path, error);
+		g_assert_no_error(*error);
+		g_assert_true(ret);
+		json_reload = json_node_get_object(json_parser_get_root(tmp_parser));
+		json_object_ref(json_reload);
+	}
+
+	return fu_engine_backends_load(priv->engine,
+				       priv->progress,
+				       json_init,
+				       json_write_firmware,
+				       json_reload,
+				       error);
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -3475,6 +3546,7 @@ main(int argc, char *argv[])
 	g_autofree gchar *cmd_descriptions = NULL;
 	g_autofree gchar *filter = NULL;
 	g_autofree gchar *save_backends_fn = NULL;
+	g_autofree gchar *load_backends_fn = NULL;
 	const GOptionEntry options[] = {
 	    {"version",
 	     '\0',
@@ -3646,6 +3718,15 @@ main(int argc, char *argv[])
 	     /* TRANSLATORS: command line option */
 	     N_("Output in JSON format"),
 	     NULL},
+	    {"load-backends",
+	     '\0',
+	     0,
+	     G_OPTION_ARG_STRING,
+	     &load_backends_fn,
+	     /* TRANSLATORS: command line option */
+	     N_("Specify a filename to use to load backend events"),
+	     /* TRANSLATORS: filename argument with path */
+	     N_("FILENAME")},
 	    {NULL}};
 
 #ifdef _WIN32
@@ -4109,6 +4190,12 @@ main(int argc, char *argv[])
 			return EXIT_FAILURE;
 		}
 		return EXIT_SUCCESS;
+	}
+
+	/* load devices */
+	if (load_backends_fn != NULL && !fu_util_backends_load(priv, load_backends_fn, &error)) {
+		g_printerr("%s\n", error->message);
+		return EXIT_FAILURE;
 	}
 
 	/* any plugin allowlist specified */
