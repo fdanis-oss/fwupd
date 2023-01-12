@@ -3,6 +3,8 @@
   "interactive": false,
   "steps": [
     {
+      "json-init" : "https://github.com/fwupd/fwupd-test-firmware/raw/main/device-tests/caldigit-ts4-init.json",
+      "json-reload" : "https://github.com/fwupd/fwupd-test-firmware/raw/main/device-tests/caldigit-ts4-14-10-reload.json",
       "url": "https://fwupd.org/downloads/dbeeba12332296ae68eaa104ed3b4b437659bfe027e347010a87c75bcea87292-CalDigit-TS4-combind-050322-secure-Cus-22.cab",
       "components": [
         {
@@ -14,6 +16,8 @@
       ]
     },
     {
+      "json-init" : "https://github.com/fwupd/fwupd-test-firmware/raw/main/device-tests/caldigit-ts4-init.json",
+      "json-reload" : "https://github.com/fwupd/fwupd-test-firmware/raw/main/device-tests/caldigit-ts4-14-13-reload.json",
       "url": "https://fwupd.org/downloads/161f0243e4f1222114b941b7dce057b962e38f9f9a1e799437531afcd5a68677-CalDigit-TS4-combind-121022-secure-Cus-37.cab",
       "components": [
         {
