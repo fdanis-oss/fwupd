@@ -258,3 +258,5 @@ fu_engine_backends_load(FuEngine *self,
 			JsonObject *json_write_firmware,
 			JsonObject *json_reload,
 			GError **error);
+void
+fu_engine_set_install_dump_prefix_path(FuEngine *self, gchar *prefix_path);

@@ -133,6 +133,7 @@ struct _FuEngine {
 	JsonObject *emulated_init;
 	JsonObject *emulated_write_firmware;
 	JsonObject *emulated_reload;
+	gchar *dump_prefix;
 };
 
 enum {
@@ -3504,6 +3505,58 @@ fu_engine_firmware_read(FuEngine *self,
 	return fu_device_read_firmware(device, progress, error);
 }
 
+static gboolean
+is_waiting_for_replug(FuEngine *self)
+{
+	g_autoptr(GPtrArray) devices = fu_device_list_get_all(self->device_list);
+	for (guint i = 0; i < devices->len; i++) {
+		FuDevice *dev_tmp = g_ptr_array_index(devices, i);
+		if (fu_device_has_flag(dev_tmp, FWUPD_DEVICE_FLAG_WAIT_FOR_REPLUG))
+			return TRUE;
+	}
+
+	return FALSE;
+}
+
+void
+fu_engine_set_install_dump_prefix_path(FuEngine *self, gchar *prefix_path)
+{
+	self->dump_prefix = g_strdup(prefix_path);
+}
+
+static gboolean
+save_backend_with_tag(FuEngine *self, FuBackend *backend, FuDevice *device)
+{
+	GPtrArray *backend_tags;
+	const gchar *start_tag;
+	const gchar *end_tag;
+	g_autoptr(JsonBuilder) json_builder = json_builder_new();
+	g_autoptr(JsonGenerator) json_generator = NULL;
+	g_autoptr(JsonNode) json_root = NULL;
+	g_autofree gchar *data = NULL;
+	g_autofree gchar *path = NULL;
+	g_autoptr(GError) local_error = NULL;
+
+	backend_tags = fu_device_get_backend_tags(device);
+	if (backend_tags->len == 0)
+		return FALSE;
+	start_tag = (gchar *)g_ptr_array_index(backend_tags, 0);
+	end_tag = (gchar *)g_ptr_array_index(backend_tags, backend_tags->len - 1);
+
+	fu_backend_save(backend, json_builder, end_tag, FU_BACKEND_SAVE_FLAG_NONE, &local_error);
+	json_root = json_builder_get_root(json_builder);
+	json_generator = json_generator_new();
+	json_generator_set_pretty(json_generator, TRUE);
+	json_generator_set_root(json_generator, json_root);
+	data = json_generator_to_data(json_generator, NULL);
+	if (data == NULL)
+		return FALSE;
+
+	path = g_strdup_printf("%s-%s.json", self->dump_prefix, start_tag);
+	/* save to file */
+	return g_file_set_contents(path, data, -1, &local_error);
+}
+
 gboolean
 fu_engine_install_blob(FuEngine *self,
 		       FuDevice *device,
@@ -3516,6 +3569,7 @@ fu_engine_install_blob(FuEngine *self,
 	guint retries = 0;
 	g_autofree gchar *device_id = NULL;
 	g_autoptr(GTimer) timer = g_timer_new();
+	FuBackend *current_backend = NULL;
 
 	/* progress */
 	fu_progress_set_id(progress, G_STRLOC);
@@ -3541,6 +3595,24 @@ fu_engine_install_blob(FuEngine *self,
 	if (!fu_engine_prepare(self, device_id, fu_progress_get_child(progress), flags, error))
 		return FALSE;
 	fu_progress_step_done(progress);
+
+	/* get backend used for the device */
+	for (guint i = 0; i < self->backends->len; i++) {
+		FuBackend *tmp_backend = g_ptr_array_index(self->backends, i);
+		GPtrArray *devices = fu_backend_get_devices(tmp_backend);
+		for (guint j = 0; j < devices->len; j++) {
+			FuDevice *d = g_ptr_array_index(devices, j);
+			if (g_strcmp0(fu_device_get_backend_id(device), fu_device_get_backend_id(d)) == 0) {
+				current_backend = tmp_backend;
+				break;
+			}
+		}
+		if (current_backend != NULL)
+			break;
+	}
+
+	if (self->dump_prefix != NULL && is_waiting_for_replug(self))
+		save_backend_with_tag(self, current_backend, device);
 
 	/* plugins can set FWUPD_DEVICE_FLAG_ANOTHER_WRITE_REQUIRED to run again, but they
 	 * must return TRUE rather than an error */
@@ -3585,6 +3657,9 @@ fu_engine_install_blob(FuEngine *self,
 			return FALSE;
 		fu_progress_step_done(progress_local);
 
+		if (self->dump_prefix != NULL && is_waiting_for_replug(self))
+			save_backend_with_tag(self, current_backend, device);
+
 		if (self->emulated_write_firmware != NULL) {
 			if (!fu_backend_load(self->emulation_backend,
 					     self->emulated_write_firmware,
@@ -3604,6 +3679,9 @@ fu_engine_install_blob(FuEngine *self,
 			return FALSE;
 		fu_progress_step_done(progress_local);
 
+		if (self->dump_prefix != NULL && is_waiting_for_replug(self))
+			save_backend_with_tag(self, current_backend, device);
+
 		/* attach into runtime mode */
 		if (!fu_engine_attach(self,
 				      device_id,
@@ -3611,6 +3689,9 @@ fu_engine_install_blob(FuEngine *self,
 				      error))
 			return FALSE;
 		fu_progress_step_done(progress_local);
+
+		if (self->dump_prefix != NULL && is_waiting_for_replug(self))
+			save_backend_with_tag(self, current_backend, device);
 
 		if (self->emulated_reload != NULL) {
 			if (!fu_backend_load(self->emulation_backend,
@@ -3625,6 +3706,9 @@ fu_engine_install_blob(FuEngine *self,
 		if (!fu_engine_reload(self, device_id, error))
 			return FALSE;
 		fu_progress_step_done(progress_local);
+
+		if (self->dump_prefix != NULL && is_waiting_for_replug(self))
+			save_backend_with_tag(self, current_backend, device);
 
 		/* the device and plugin both may have changed */
 		device_tmp = fu_engine_get_device(self, device_id, error);
@@ -3646,6 +3730,17 @@ fu_engine_install_blob(FuEngine *self,
 	if (!fu_engine_cleanup(self, device_id, fu_progress_get_child(progress), flags, error))
 		return FALSE;
 	fu_progress_step_done(progress);
+
+	if (self->dump_prefix != NULL) {
+		g_autoptr(FuDevice) device_tmp = NULL;
+		/* the device and plugin both may have changed */
+		device_tmp = fu_engine_get_device(self, device_id, error);
+		if (device_tmp == NULL) {
+			g_prefix_error(error, "failed to get device after install blob: ");
+			return FALSE;
+		}
+		save_backend_with_tag(self, current_backend, device_tmp);
+	}
 
 	/* make the UI update */
 	fu_engine_emit_device_changed(self, device_id);

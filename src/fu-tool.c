@@ -3547,6 +3547,7 @@ main(int argc, char *argv[])
 	g_autofree gchar *filter = NULL;
 	g_autofree gchar *save_backends_fn = NULL;
 	g_autofree gchar *load_backends_fn = NULL;
+	g_autofree gchar *dump_prefix = NULL;
 	const GOptionEntry options[] = {
 	    {"version",
 	     '\0',
@@ -3726,6 +3727,15 @@ main(int argc, char *argv[])
 	     /* TRANSLATORS: command line option */
 	     N_("Specify a filename to use to load backend events"),
 	     /* TRANSLATORS: filename argument with path */
+	     N_("FILENAME")},
+	    {"device-install-dump-prefix",
+	     '\0',
+	     0,
+	     G_OPTION_ARG_STRING,
+	     &dump_prefix,
+	     /* TRANSLATORS: command line option */
+	     N_("Specify a prefix filename to dump device install backend events"),
+	     /* TRANSLATORS: prefix filename argument with path */
 	     N_("FILENAME")},
 	    {NULL}};
 
@@ -4165,6 +4175,12 @@ main(int argc, char *argv[])
 		fu_context_add_flag(fu_engine_get_context(priv->engine),
 				    FU_CONTEXT_FLAG_SAVE_EVENTS |
 					FU_CONTEXT_FLAG_SAVE_REMOVED_DEVICES);
+	}
+	if (dump_prefix != NULL) {
+		g_autofree gchar *full_path = g_canonicalize_filename(dump_prefix, NULL);
+		fu_context_add_flag(fu_engine_get_context(priv->engine),
+				    FU_CONTEXT_FLAG_SAVE_EVENTS);
+		fu_engine_set_install_dump_prefix_path(priv->engine, full_path);
 	}
 	g_signal_connect(FU_ENGINE(priv->engine),
 			 "device-request",
